@@ -280,7 +280,7 @@ defmodule PaperTrail do
       event: "insert",
       item_type: get_item_type(model),
       item_id: get_model_id(model),
-      item_changes: serialize(model),
+      item_changes: changeset |> filter_attrs(get_item_struct(model)) |> serialize(),
       originator_id:
         case originator_ref do
           nil -> nil
@@ -300,7 +300,7 @@ defmodule PaperTrail do
       event: "update",
       item_type: get_item_type(changeset),
       item_id: get_model_id(changeset),
-      item_changes: changeset.changes,
+      item_changes: changeset |> filter_attrs(get_item_struct(changeset)) |> serialize(),
       originator_id:
         case originator_ref do
           nil -> nil
@@ -320,7 +320,7 @@ defmodule PaperTrail do
       event: "delete",
       item_type: get_item_type(model_or_changeset),
       item_id: get_model_id(model_or_changeset),
-      item_changes: serialize(model_or_changeset),
+      item_changes: changeset |> filter_attrs(get_item_struct(model_or_changeset)) |> serialize(),
       originator_id:
         case originator_ref do
           nil -> nil
@@ -358,8 +358,36 @@ defmodule PaperTrail do
   defp add_prefix(changeset, nil), do: changeset
   defp add_prefix(changeset, prefix), do: Ecto.put_meta(changeset, prefix: prefix)
 
-  defp get_item_type(%Ecto.Changeset{data: data}), do: get_item_type(data)
-  defp get_item_type(model), do: model.__struct__ |> Module.split() |> List.last()
+  defp get_item_struct(%Ecto.Changeset{data: data}), do: get_item_struct(data)
+  defp get_item_struct(model), do: model.__struct__
+
+  defp get_item_type(item), do: get_item_struct(item) |> Module.split() |> List.last()
+
+  defp filter_attrs(changeset, struct) when is_atom(struct) do
+    {filter_type, attrs} =
+      cond do
+        :erlang.function_exported(struct, :paper_trail_whitelist, 0) ->
+          {:whitelist, struct.paper_trail_whitelist}
+
+        :erlang.function_exported(struct, :paper_trail_blacklist, 0) ->
+          {:blacklist, struct.paper_trail_blacklist}
+
+        _ ->
+          {nil, []}
+      end
+
+    case is_list(attrs) do
+      true -> attrs
+      _ -> raise ArgumentError
+    end
+
+    case filter_type do
+      :whitelist -> Map.take(changeset, attrs)
+      :blacklist -> Map.drop(changeset, attrs)
+      true -> changeset
+    end
+  end
+  defp filter_attrs(changeset, _struct) do: changeset
 
   def get_model_id(%Ecto.Changeset{data: data}), do: get_model_id(data)
 
